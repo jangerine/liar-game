@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>온라인 라이어 게임</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .container { background: #fff; width: 100%; max-width: 480px; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
+    h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
+    .screen { display: none; }
+    .active { display: block; }
+    input[type="text"] { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; text-align: center; }
+    button { width: 100%; padding: 12px; margin: 8px 0; border: none; border-radius: 6px; background-color: #4A90E2; color: white; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    button:hover { background-color: #357ABD; }
+    button.secondary { background-color: #6c757d; }
+    button.secondary:hover { background-color: #5a6268; }
+    button.danger { background-color: #e74c3c; }
+    button.danger:hover { background-color: #c0392b; }
+    .player-list { list-style: none; margin: 15px 0; padding: 0; }
+    .player-item { padding: 10px; background: #eef2f7; margin-bottom: 5px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .host-tag { background: #ff9800; color: white; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .card { background: #fff3cd; border: 1px solid #ffeeba; border-radius: 8px; padding: 20px; margin: 15px 0; }
+    .card h2 { color: #856404; margin-bottom: 10px; }
+    .word-box { font-size: 28px; font-weight: bold; color: #d9534f; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>🤥 온라인 라이어 게임</h1>
+
+    <!-- 1. 메인 / 로비 입장 화면 -->
+    <div id="screen-lobby" class="screen active">
+      <input type="text" id="nickname-input" placeholder="닉네임 입력" maxlength="8">
+      <button onclick="createRoom()">방 만들기</button>
+      <hr style="margin: 15px 0;">
+      <input type="text" id="roomcode-input" placeholder="방 코드 6자리 입력" maxlength="6" style="text-transform: uppercase;">
+      <button class="secondary" onclick="joinRoom()">방 참가하기</button>
+    </div>
+
+    <!-- 2. 대기실 화면 -->
+    <div id="screen-room" class="screen">
+      <h3 id="room-display">방 코드: </h3>
+      <ul id="player-list" class="player-list"></ul>
+      <button id="start-btn" onclick="startGame()">게임 시작 (방장전용)</button>
+    </div>
+
+    <!-- 3. 게임 진행 화면 -->
+    <div id="screen-game" class="screen">
+      <div class="card">
+        <h2>주제: <span id="topic-display"></span></h2>
+        <p>당신의 제시어:</p>
+        <div id="word-display" class="word-box"></div>
+      </div>
+      <p style="margin-bottom: 15px; color: #666; font-size: 14px;">순서대로 제시어에 대해 설명하세요.<br>라이어에게 정답을 걸리지 않도록 주의하세요!</p>
+      <button class="danger" onclick="startVote()">투표 시작하기</button>
+    </div>
+
+    <!-- 4. 투표 화면 -->
+    <div id="screen-vote" class="screen">
+      <h2>라이어로 의심되는 사람을 선택하세요!</h2>
+      <div id="vote-buttons" style="margin-top: 15px;"></div>
+    </div>
+
+    <!-- 5. 라이어 최후의 변론 / 정답 입력 화면 -->
+    <div id="screen-liar-guess" class="screen">
+      <h2>🚨 라이어로 지목되었습니다!</h2>
+      <p style="margin: 10px 0;">제시어를 맞춰서 역전승을 노리세요!</p>
+      <div id="liar-input-box">
+        <input type="text" id="guess-input" placeholder="제시어 입력">
+        <button onclick="submitGuess()">정답 제출</button>
+      </div>
+      <div id="liar-wait-box" style="display: none;">
+        <p style="font-weight: bold; color: #e74c3c;">라이어가 제시어를 맞추고 있습니다...</p>
+      </div>
+    </div>
+
+    <!-- 6. 결과 화면 -->
+    <div id="screen-result" class="screen">
+      <h2 id="result-winner" style="font-size: 28px; margin-bottom: 10px;"></h2>
+      <p id="result-reason" style="margin-bottom: 15px; font-size: 16px;"></p>
+      <p style="font-size: 14px; color: #666;">정답 제시어: <strong id="result-word"></strong></p>
+      <button onclick="backToRoom()" style="margin-top: 20px;">대기실로 돌아가기</button>
+    </div>
+  </div>
+
+  <!-- Socket.io 클라이언트 라이브러리 -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let currentRoomCode = '';
+    let myId = '';
+
+    socket.on('connect', () => {
+      myId = socket.id;
+    });
+
+    // 화면 전환 함수
+    function showScreen(screenId) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(screenId).classList.add('active');
+    }
+
+    // 방 만들기
+    function createRoom() {
+      const nickname = document.getElementById('nickname-input').value.trim();
+      if (!nickname) return alert('닉네임을 입력하세요.');
+      socket.emit('createRoom', { nickname });
+    }
+
+    // 방 참가
+    function joinRoom() {
+      const nickname = document.getElementById('nickname-input').value.trim();
+      const roomCode = document.getElementById('roomcode-input').value.trim();
+      if (!nickname || !roomCode) return alert('닉네임과 방 코드를 입력하세요.');
+      socket.emit('joinRoom', { nickname, roomCode });
+    }
+
+    // 방 생성 완료
+    socket.on('roomCreated', ({ roomCode, players }) => {
+      currentRoomCode = roomCode;
+      updateRoomUI(roomCode, players);
+      showScreen('screen-room');
+    });
+
+    // 플레이어 정보 업데이트
+    socket.on('updatePlayers', ({ roomCode, players }) => {
+      currentRoomCode = roomCode;
+      updateRoomUI(roomCode, players);
+      showScreen('screen-room');
+    });
+
+    function updateRoomUI(roomCode, players) {
+      document.getElementById('room-display').innerText = `방 코드: ${roomCode}`;
+      const playerListEl = document.getElementById('player-list');
+      playerListEl.innerHTML = '';
+
+      let isHost = false;
+      players.forEach(p => {
+        if (p.id === socket.id && p.host) isHost = true;
+        const li = document.createElement('li');
+        li.className = 'player-item';
+        li.innerHTML = `
+          <span>${p.nickname} ${p.id === socket.id ? '(나)' : ''}</span>
+          ${p.host ? '<span class="host-tag">방장</span>' : ''}
+        `;
+        playerListEl.appendChild(li);
+      });
+
+      document.getElementById('start-btn').style.display = isHost ? 'block' : 'none';
+    }
+
+    // 게임 시작
+    function startGame() {
+      socket.emit('startGame', { roomCode: currentRoomCode });
+    }
+
+    socket.on('gameStarted', ({ topic, word, isLiar }) => {
+      document.getElementById('topic-display').innerText = topic;
+      document.getElementById('word-display').innerText = word;
+      showScreen('screen-game');
+    });
+
+    // 투표 시작
+    function startVote() {
+      socket.emit('startVote', { roomCode: currentRoomCode });
+    }
+
+    socket.on('voteStarted', ({ players }) => {
+      const btnContainer = document.getElementById('vote-buttons');
+      btnContainer.innerHTML = '';
+
+      players.forEach(p => {
+        if (p.id !== socket.id) {
+          const btn = document.createElement('button');
+          btn.innerText = p.nickname;
+          btn.onclick = () => {
+            socket.emit('submitVote', { roomCode: currentRoomCode, targetId: p.id });
+            btnContainer.innerHTML = '<p>다른 플레이어들의 투표를 기다리는 중...</p>';
+          };
+          btnContainer.appendChild(btn);
+        }
+      });
+
+      showScreen('screen-vote');
+    });
+
+    // 라이어 지목됨
+    socket.on('liarCaught', ({ liarId, liarNickname }) => {
+      showScreen('screen-liar-guess');
+      if (socket.id === liarId) {
+        document.getElementById('liar-input-box').style.display = 'block';
+        document.getElementById('liar-wait-box').style.display = 'none';
+      } else {
+        document.getElementById('liar-input-box').style.display = 'none';
+        document.getElementById('liar-wait-box').style.display = 'block';
+      }
+    });
+
+    // 라이어 정답 제출
+    function submitGuess() {
+      const guess = document.getElementById('guess-input').value.trim();
+      if (!guess) return alert('정답을 입력하세요.');
+      socket.emit('guessWord', { roomCode: currentRoomCode, guess });
+    }
+
+    // 결과 처리
+    socket.on('gameResult', ({ winner, reason, word }) => {
+      document.getElementById('result-winner').innerText = winner === 'LIAR' ? '🎉 라이어 승리!' : '🎉 시민 승리!';
+      document.getElementById('result-winner').style.color = winner === 'LIAR' ? '#d9534f' : '#28a745';
+      document.getElementById('result-reason').innerText = reason;
+      document.getElementById('result-word').innerText = word;
+      showScreen('screen-result');
+    });
+
+    function backToRoom() {
+      showScreen('screen-room');
+    }
+
+    // 에러 메시지 출력
+    socket.on('errorMessage', (msg) => {
+      alert(msg);
+    });
+  </script>
+</body>
+</html>
